@@ -299,11 +299,9 @@ async def monitor_microphone(participant, speech_state):
         num_channels=1,
     )
 
-    # 16 kHz * 2 bytes * 1 channel
     BYTES_PER_SECOND = 16000 * 2
-
-    PRE_ROLL_BYTES = BYTES_PER_SECOND * 1       # 1 giây
-    AMBIENT_WINDOW_BYTES = BYTES_PER_SECOND * 5 # 5 giây
+    PRE_ROLL_BYTES = BYTES_PER_SECOND * 1
+    AMBIENT_WINDOW_BYTES = BYTES_PER_SECOND * 5
 
     frame_count = 0
 
@@ -312,75 +310,6 @@ async def monitor_microphone(participant, speech_state):
         frame_bytes = frame.data.tobytes()
 
         frame_count += 1
-
-        # Debug mỗi 100 frame, kể cả audio toàn zero
-        if frame_count % 100 == 0:
-            import array
-
-            samples = array.array("h")
-            samples.frombytes(frame_bytes)
-
-            if len(samples) > 0:
-                min_sample = min(samples)
-                max_sample = max(samples)
-                nonzero = sum(1 for x in samples if x != 0)
-            else:
-                min_sample = 0
-                max_sample = 0
-                nonzero = 0
-
-            logger.warning(
-                ">>> RAW MIC FRAME | count=%d bytes=%d samples=%d "
-                "min=%d max=%d nonzero=%d <<<",
-                frame_count,
-                len(frame_bytes),
-                len(samples),
-                min_sample,
-                max_sample,
-                nonzero,
-            )
-
-    # =========================================
-    # USER ĐANG NÓI
-    # =========================================
-    if speech_state["speaking"]:
-        speech_state["buffer"].extend(frame_bytes)
-
-    # =========================================
-    # USER KHÔNG NÓI
-    # =========================================
-    else:
-        # PRE-ROLL
-        speech_state["pre_buffer"].extend(frame_bytes)
-
-        if len(speech_state["pre_buffer"]) > PRE_ROLL_BYTES:
-            speech_state["pre_buffer"] = speech_state["pre_buffer"][
-                -PRE_ROLL_BYTES:
-            ]
-
-        # AMBIENT AUDIO
-        speech_state["ambient_buffer"].extend(frame_bytes)
-
-        if len(speech_state["ambient_buffer"]) >= AMBIENT_WINDOW_BYTES:
-            audio_bytes = bytes(
-                speech_state["ambient_buffer"][:AMBIENT_WINDOW_BYTES]
-            )
-
-            speech_state["ambient_buffer"] = speech_state[
-                "ambient_buffer"
-            ][AMBIENT_WINDOW_BYTES:]
-
-            with wave.open("latest_turn.wav", "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(16000)
-                wf.writeframes(audio_bytes)
-
-            logger.warning(
-                ">>> SAVED AMBIENT WINDOW | %.2f sec | bytes=%d <<<",
-                len(audio_bytes) / BYTES_PER_SECOND,
-                len(audio_bytes),
-            )
 
         # =========================================
         # USER ĐANG NÓI
@@ -392,9 +321,7 @@ async def monitor_microphone(participant, speech_state):
         # USER KHÔNG NÓI
         # =========================================
         else:
-            # -----------------------------
             # PRE-ROLL
-            # -----------------------------
             speech_state["pre_buffer"].extend(frame_bytes)
 
             if len(speech_state["pre_buffer"]) > PRE_ROLL_BYTES:
@@ -402,12 +329,10 @@ async def monitor_microphone(participant, speech_state):
                     -PRE_ROLL_BYTES:
                 ]
 
-            # -----------------------------
             # AMBIENT AUDIO
-            # -----------------------------
             speech_state["ambient_buffer"].extend(frame_bytes)
 
-            # Đủ 5 giây noise/background
+            # Đủ 5 giây thì save
             if len(speech_state["ambient_buffer"]) >= AMBIENT_WINDOW_BYTES:
                 audio_bytes = bytes(
                     speech_state["ambient_buffer"][:AMBIENT_WINDOW_BYTES]
@@ -424,10 +349,22 @@ async def monitor_microphone(participant, speech_state):
                     wf.writeframes(audio_bytes)
 
                 logger.warning(
-                    ">>> SAVED AMBIENT WINDOW | %.2f sec | bytes=%d <<<",
+                    ">>> SAVED NEW AMBIENT AUDIO | %.2f sec | bytes=%d <<<",
                     len(audio_bytes) / BYTES_PER_SECOND,
                     len(audio_bytes),
                 )
+
+        # =========================================
+        # DEBUG
+        # =========================================
+        if frame_count % 100 == 0:
+            logger.warning(
+                ">>> MIC STATE | speaking=%s | speech=%d | pre=%d | ambient=%d <<<",
+                speech_state["speaking"],
+                len(speech_state["buffer"]),
+                len(speech_state["pre_buffer"]),
+                len(speech_state["ambient_buffer"]),
+            )
 @server.rtc_session()
 async def my_agent(ctx: JobContext):
     # Logging setup
